@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import Dict, Any
 from pydantic import BaseModel, Field, EmailStr
 from datetime import datetime, timedelta
+import time
+import threading
 
 from app.core.security import (
     verify_password,
@@ -17,6 +19,43 @@ from app.core.logging import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+# In-memory brute-force tracker (per IP)
+# Structure: {ip: {"count": int, "locked_until": float}}
+_login_attempts: Dict[str, Dict] = {}
+_lock = threading.Lock()
+
+_MAX_ATTEMPTS = 5
+_LOCKOUT_SECONDS = 15 * 60  # 15 minutes
+
+
+def _check_rate_limit(ip: str) -> None:
+    now = time.time()
+    with _lock:
+        record = _login_attempts.get(ip, {"count": 0, "locked_until": 0.0})
+        if now < record["locked_until"]:
+            remaining = int(record["locked_until"] - now)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many failed login attempts. Try again in {remaining}s.",
+                headers={"Retry-After": str(remaining)},
+            )
+
+
+def _record_failure(ip: str) -> None:
+    now = time.time()
+    with _lock:
+        record = _login_attempts.setdefault(ip, {"count": 0, "locked_until": 0.0})
+        record["count"] += 1
+        if record["count"] >= _MAX_ATTEMPTS:
+            record["locked_until"] = now + _LOCKOUT_SECONDS
+            record["count"] = 0
+            logger.warning(f"IP {ip} locked out for {_LOCKOUT_SECONDS}s after repeated failed logins")
+
+
+def _clear_failures(ip: str) -> None:
+    with _lock:
+        _login_attempts.pop(ip, None)
 
 
 # Pydantic models
@@ -92,27 +131,31 @@ async def register(request: UserRegister):
 
 
 @router.post("/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     """
     Login with email and password
     """
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(client_ip)
+
     try:
         from app.services.auth_service import auth_service
-        
-        # Authenticate user
+
         user = await auth_service.authenticate_user(
-            email=form_data.username,  # OAuth2 spec uses 'username'
+            email=form_data.username,
             password=form_data.password
         )
-        
+
         if not user:
+            _record_failure(client_ip)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        
-        # Create tokens
+
+        _clear_failures(client_ip)
+
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
             subject=user["id"],
@@ -123,16 +166,16 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
                 "is_active": user.get("is_active", True)
             }
         )
-        
+
         refresh_token = create_refresh_token(subject=user["id"])
-        
+
         return Token(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:

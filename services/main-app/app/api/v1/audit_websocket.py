@@ -5,6 +5,7 @@ Audit WebSocket API endpoints
 from typing import Dict, Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from fastapi.responses import HTMLResponse
+import asyncio
 import json
 import logging
 
@@ -15,27 +16,28 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
+_WS_RECEIVE_TIMEOUT = 30.0  # seconds; client must send something within this window
+_WS_PING_INTERVAL = 20.0    # server-initiated ping every 20 s
+
 
 @router.websocket("/ws/audit/{user_id}")
 async def audit_websocket_endpoint(websocket: WebSocket, user_id: str):
     """
     WebSocket endpoint for real-time audit event streaming
-    
+
     Args:
         websocket: The WebSocket connection
         user_id: ID of the user connecting
     """
     try:
-        # Connect to WebSocket manager
         await audit_websocket_manager.connect(websocket, user_id)
-        
-        # Keep connection alive and handle incoming messages
+
         while True:
             try:
-                # Wait for messages from client
-                data = await websocket.receive_text()
-                
-                # Parse incoming message
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=_WS_RECEIVE_TIMEOUT,
+                )
                 try:
                     message = json.loads(data)
                     await handle_client_message(websocket, user_id, message)
@@ -43,24 +45,36 @@ async def audit_websocket_endpoint(websocket: WebSocket, user_id: str):
                     await websocket.send_text(json.dumps({
                         "type": "error",
                         "message": "Invalid JSON format",
-                        "timestamp": "2024-01-01T00:00:00"
                     }))
-                
+
+            except asyncio.TimeoutError:
+                # Client silent for too long — send a server ping and give 5 s to pong
+                try:
+                    await websocket.send_text(json.dumps({"type": "ping"}))
+                    pong = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+                    msg = json.loads(pong)
+                    if msg.get("type") != "pong":
+                        logger.warning(f"Unexpected response to ping from user {user_id}")
+                except (asyncio.TimeoutError, Exception):
+                    logger.warning(f"WebSocket user {user_id} did not pong; closing stale connection")
+                    break
+
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected for user {user_id}")
                 break
             except Exception as e:
                 logger.error(f"Error handling WebSocket message for user {user_id}: {e}")
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "message": f"Error processing message: {str(e)}",
-                    "timestamp": "2024-01-01T00:00:00"
-                }))
-                
+                try:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": f"Error processing message: {str(e)}",
+                    }))
+                except Exception:
+                    break
+
     except Exception as e:
         logger.error(f"Error in WebSocket endpoint for user {user_id}: {e}")
     finally:
-        # Ensure connection is cleaned up
         audit_websocket_manager.disconnect(websocket, user_id)
 
 
