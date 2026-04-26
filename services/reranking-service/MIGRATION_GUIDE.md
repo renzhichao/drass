@@ -1,174 +1,51 @@
 # Reranking Service Migration Guide
 
-## Overview
-This guide describes the migration from the original reranking service to the optimized version with enhanced architecture.
+> 状态：历史迁移说明，不作为当前服务现状文档。
 
-## Key Improvements
+## 文档定位
 
-### 1. Architecture Enhancements
-- **Direct FastAPI startup**: Removed complex `start_service.py` script
-- **Async/await support**: Full async implementation for better concurrency
-- **Multi-provider architecture**: Extensible provider system (sentence-transformers, openai, cohere)
-- **Graceful degradation**: Automatic fallback to lighter models on failure
+这份文件记录的是一轮对 `reranking-service` 的重构迁移思路。它保留有参考价值，但不适合再被当作“当前已完成状态”的主文档。
 
-### 2. Performance Optimizations
-- **Docker build time**: Reduced from 200s to ~38s (81% improvement)
-- **Image size**: Reduced from 1.4GB to ~750MB (46% reduction)
-- **Multi-stage build**: Better layer caching and smaller final image
-- **Connection pooling**: Improved resource utilization
-- **Batch processing**: Parallel processing for multiple queries
+## 为什么需要降级
 
-### 3. Caching System
-- **LRU Cache**: Local in-memory caching with TTL support
-- **Redis Cache**: Distributed caching for multi-instance deployments
-- **Automatic fallback**: Falls back to LRU if Redis unavailable
-- **Cache statistics**: Hit rate tracking and monitoring
+旧版内容的问题主要有：
 
-### 4. Monitoring & Observability
-- **Prometheus metrics**: Request counts, latencies, cache hits
-- **Health endpoints**: Detailed health status with fallback info
-- **Structured logging**: JSON logs with context
-- **Resource monitoring**: Memory and CPU usage tracking
+1. 把“迁移目标”写成了“当前事实”。
+2. 把若干性能收益、镜像大小收益、部署结果写成已确认结论，但仓库内未提供与之严格绑定的统一验证上下文。
+3. 把 `docker-compose`、回滚、监控步骤写成稳定流程，容易让人误解为服务已经形成正式迁移闭环。
 
-## Migration Steps
+## 当前仓库里可确认的事实
 
-### Step 1: Update Configuration
-The new service uses environment variables with the `RERANKING_` prefix:
+当前可以确认：
 
-```bash
-# Old configuration
-MODEL_NAME=BAAI/bge-reranker-base
-DEVICE=cpu
-MAX_LENGTH=512
+1. 服务入口文件存在：`app.py`
+2. 旧入口/历史实现仍保留：`app_old.py`、`start_service.py`
+3. 配置采用环境变量方式，关键变量包括：
+   - `RERANKING_PROVIDER`
+   - `RERANKING_MODEL`
+   - `RERANKING_DEVICE`
+   - `RERANKING_MAX_LENGTH`
+   - `RERANKING_BATCH_SIZE`
+   - `REDIS_URL`
+4. 默认监听端口来自配置文件，当前默认值是 `8002`
 
-# New configuration
-RERANKING_PROVIDER=sentence-transformers
-RERANKING_MODEL=cross-encoder/ms-marco-MiniLM-L-12-v2
-RERANKING_DEVICE=cpu
-RERANKING_MAX_LENGTH=512
-```
+## 当前更合适的理解方式
 
-### Step 2: Update Docker Setup
+应把这份文档理解为：
 
-1. Replace the Dockerfile with the new multi-stage version
-2. Update docker-compose.yml with new environment variables
-3. Build with BuildKit enabled:
-```bash
-export DOCKER_BUILDKIT=1
-docker-compose build reranking-service
-```
+1. 服务曾经经历过一轮重构和配置收敛。
+2. 仓库中同时保留了新旧实现痕迹。
+3. 是否真的完成迁移，应以当前代码入口、测试结果和运行方式为准，而不是以这份说明为准。
 
-### Step 3: Test the Migration
+## 如果你要使用当前服务
 
-Run the test script to validate the new implementation:
-```bash
-python test_refactored_service.py
-```
+优先参考：
 
-### Step 4: Deploy
+1. `services/reranking-service/README.md`
+2. `services/reranking-service/config.py`
+3. `services/reranking-service/app.py`
+4. 服务测试文件与实际启动命令
 
-Deploy using docker-compose:
-```bash
-docker-compose up -d reranking-service
-```
+## 本文件保留用途
 
-## API Compatibility
-
-The API endpoints remain compatible with the original version:
-
-### Endpoints
-- `POST /rerank` - Rerank documents
-- `POST /batch_rerank` - Batch reranking
-- `GET /health` - Health check (enhanced response)
-- `GET /models` - Model information (new)
-- `POST /clear_cache` - Clear cache
-- `GET /metrics` - Prometheus metrics
-
-### Request/Response Format
-Request and response formats are backward compatible with additional optional fields.
-
-## New Features
-
-### 1. Provider System
-```python
-# Configure provider via environment
-RERANKING_PROVIDER=sentence-transformers  # or openai, cohere
-```
-
-### 2. Fallback Models
-```python
-# Automatic fallback chain
-FALLBACK_MODELS=[
-    "cross-encoder/ms-marco-MiniLM-L-12-v2",  # 140MB
-    "BAAI/bge-reranker-base",                 # 400MB
-    "BAAI/bge-reranker-large"                 # 1.1GB
-]
-```
-
-### 3. Cache Configuration
-```python
-# Choose cache type
-CACHE_TYPE=lru        # Local LRU cache
-CACHE_TYPE=redis      # Distributed Redis cache
-REDIS_URL=redis://localhost:6379
-```
-
-### 4. Enhanced Health Check
-```json
-GET /health
-{
-    "status": "healthy",
-    "model_loaded": true,
-    "model_name": "cross-encoder/ms-marco-MiniLM-L-12-v2",
-    "provider": "sentence-transformers",
-    "fallback_enabled": true,
-    "is_fallback_active": false,
-    "cache_enabled": true,
-    "cache_type": "lru",
-    "cache_hit_rate": 75.5
-}
-```
-
-## Rollback Plan
-
-If issues arise, rollback to the original version:
-
-1. Restore original Dockerfile
-2. Restore original docker-compose.yml configuration
-3. Rebuild and redeploy:
-```bash
-docker-compose build reranking-service
-docker-compose up -d reranking-service
-```
-
-## Monitoring
-
-Monitor the service after migration:
-
-1. Check health endpoint: `curl http://localhost:8004/health`
-2. View metrics: `curl http://localhost:8004/metrics`
-3. Check logs: `docker-compose logs -f reranking-service`
-
-## Troubleshooting
-
-### Service Won't Start
-- Check if the model can be downloaded
-- Verify Redis connection if using Redis cache
-- Check resource limits in docker-compose.yml
-
-### Poor Performance
-- Adjust `RERANKING_BATCH_SIZE` for your hardware
-- Enable Redis cache for better caching across restarts
-- Check if fallback model is being used (lighter but less accurate)
-
-### High Memory Usage
-- Reduce `CACHE_SIZE` for LRU cache
-- Use smaller fallback models
-- Adjust Docker memory limits
-
-## Support
-
-For issues or questions:
-1. Check logs: `docker-compose logs reranking-service`
-2. Review health status: `curl http://localhost:8004/health`
-3. Check metrics: `curl http://localhost:8004/metrics`
+保留该文档，仅用于解释历史迁移背景；后续若需要“当前服务说明”，应另写一份面向现状的运行文档，而不是继续沿用这份迁移稿。

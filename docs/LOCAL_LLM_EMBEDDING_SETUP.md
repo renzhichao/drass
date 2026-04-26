@@ -1,184 +1,79 @@
-# Local LLM and Embedding Services Setup
+# 本地 LLM 与 Embedding 说明
 
-## Overview
+这份文档用于说明“本地开发”场景下的两类核心能力：
 
-This document describes the setup and configuration of local LLM and embedding services for the Drass project, completed on 2025-09-10.
+1. 本地 LLM 服务
+2. 本地 Embedding 服务
 
-## Services Deployed
+它不再保留历史机器路径、历史个人目录和一次性操作记录。
 
-### 1. Qwen3-8B-MLX LLM Service (Port 8001)
+## 当前本地开发的常见组合
 
-**Model**: Qwen3-8B-MLX-bf16 (optimized for Apple Silicon)
-**Location**: `/Users/arthurren/projects/drass/mlx_qwen3_converted`
-**API**: OpenAI-compatible REST API
+### 组合 A：MLX LLM + 本地 Embedding
 
-#### Setup Process:
-1. Downloaded Qwen3-8B model using LM Studio
-2. Converted from PyTorch to MLX format using `mlx_lm.convert`
-3. Created custom Flask API server (`qwen3_api_server.py`)
+- LLM：`qwen3_api_server.py`
+- Embedding：`services/embedding-service/app.py`
 
-#### Available Endpoints:
-- `GET /v1/models` - List available models
-- `POST /v1/completions` - Text completion
-- `POST /v1/chat/completions` - Chat completion
-- `GET /health` - Health check
+常见端口：
 
-#### Start Command:
+- LLM：`8001`
+- Embedding：`8002`
+
+### 组合 B：外部 / 独立 AI 服务 + 本地应用层
+
+- LLM：远程或独立本机 `8001`
+- Embedding：独立服务 `8010`
+- 应用层：`start-api-noproxy.sh` + `start-frontend-only.sh`
+
+## 本地 LLM 说明
+
+当前仓库自带的本地 LLM 入口是：
+
 ```bash
 python qwen3_api_server.py
 ```
 
-### 2. Embedding Service (Port 8002)
+说明：
 
-**Model**: sentence-transformers/all-MiniLM-L6-v2
-**Dimension**: 384
-**Provider**: Sentence Transformers (local)
+- 它提供 OpenAI 兼容接口
+- 常见端口为 `8001`
+- 依赖 `mlx_lm`
+- 依赖本地模型目录
 
-#### Setup Process:
-1. Created virtual environment in `services/embedding-service`
-2. Installed dependencies including sentence-transformers v5.1.0
-3. Configured for local model with MPS (Metal Performance Shaders) support
+## 本地 Embedding 说明
 
-#### Available Endpoints:
-- `GET /health` - Service health status
-- `POST /embeddings` - Generate embeddings for texts
-- `POST /embeddings/batch` - Batch embedding generation
-- `GET /models` - List available models
+服务目录：
 
-#### Configuration (`services/embedding-service/.env`):
-```env
-EMBEDDING_PROVIDER=sentence-transformers
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-EMBEDDING_SERVICE_PORT=8002
-MODEL_CACHE_DIR=./models
+```bash
+services/embedding-service/
 ```
 
-#### Start Command:
+常见运行方式：
+
 ```bash
 cd services/embedding-service
-source venv/bin/activate
 python app.py
 ```
 
-## Model Conversion Details
+说明：
 
-### MLX Conversion Process
-The Qwen3-8B model was converted from PyTorch format to MLX format for optimal performance on Apple Silicon:
+- 开发态常见端口是 `8002`
+- Ubuntu/生产风格文档里也出现过 `8010`
+- 当前仓库仍存在两套部署约定，使用时必须先对齐 `main-app` 的访问地址
 
-```bash
-mlx_lm.convert \
-  --hf-path local_model_qwen3 \
-  --mlx-path mlx_qwen3_converted \
-  --dtype bfloat16
-```
+## 当前必须注意的事实
 
-This conversion:
-- Reduces memory usage
-- Improves inference speed on M-series chips
-- Maintains model quality with bfloat16 precision
+1. 这两个服务都不是“只要启动就一定兼容主后端”。
+2. 端口一致不代表接口契约一致，尤其是 Embedding 服务。
+3. 当前项目文档与代码仍在收敛中，应优先参考：
+   - `docs/chensha_运行依赖分析.md`
+   - `docs/LLM_API_CONFIG_GUIDE.md`
 
-## API Integration
+## 已移除的失效内容
 
-### LLM API Example:
-```python
-import requests
+本次已去掉：
 
-# Chat completion
-response = requests.post(
-    "http://localhost:8001/v1/chat/completions",
-    json={
-        "model": "qwen3-8b-mlx",
-        "messages": [
-            {"role": "user", "content": "Hello, how are you?"}
-        ],
-        "max_tokens": 100
-    }
-)
-```
-
-### Embedding API Example:
-```python
-import requests
-
-# Generate embeddings
-response = requests.post(
-    "http://localhost:8002/embeddings",
-    json={
-        "texts": ["Text to embed", "Another text"]
-    }
-)
-embeddings = response.json()["embeddings"]
-```
-
-## Performance Characteristics
-
-### Qwen3-8B-MLX:
-- Memory Usage: ~16GB
-- Inference Speed: Fast on Apple Silicon
-- Context Length: 8192 tokens
-- Language Support: Multilingual (strong in Chinese and English)
-
-### Embedding Service:
-- Model Size: ~80MB (all-MiniLM-L6-v2)
-- Embedding Speed: <100ms for batch of 10 texts
-- Dimension: 384 (compact but effective)
-- GPU Acceleration: Enabled via MPS
-
-## Troubleshooting
-
-### Common Issues Resolved:
-
-1. **MLX-LM Server Path Restrictions**:
-   - Issue: MLX server requires relative paths
-   - Solution: Created custom Flask API server
-
-2. **Sentence Transformers Compatibility**:
-   - Issue: Version 2.2.2 incompatible with latest huggingface_hub
-   - Solution: Upgraded to sentence-transformers 5.1.0
-
-3. **Model Format Mismatch**:
-   - Issue: LM Studio downloads PyTorch format
-   - Solution: Converted to MLX format using mlx_lm.convert
-
-## Service Management
-
-### Check Service Status:
-```bash
-# LLM Service
-curl http://localhost:8001/health
-
-# Embedding Service
-curl http://localhost:8002/health
-```
-
-### Stop Services:
-```bash
-# Find and kill processes
-lsof -i :8001  # Find LLM service PID
-lsof -i :8002  # Find embedding service PID
-kill <PID>     # Stop service
-```
-
-## Future Improvements
-
-1. **Production Deployment**:
-   - Use WSGI server (gunicorn) instead of development server
-   - Add systemd service files for automatic startup
-   - Implement proper logging and monitoring
-
-2. **Model Options**:
-   - Switch back to BAAI/bge-large-zh-v1.5 for better Chinese support
-   - Consider adding reranking models
-   - Explore quantization for reduced memory usage
-
-3. **Performance Optimization**:
-   - Implement request batching
-   - Add Redis caching for embeddings
-   - Use connection pooling for API clients
-
-## References
-
-- [MLX Documentation](https://github.com/ml-explore/mlx)
-- [Sentence Transformers](https://www.sbert.net/)
-- [Qwen Model Cards](https://huggingface.co/Qwen)
-- [Drass Embedding Service Deployment Guide](./EMBEDDING_SERVICE_DEPLOYMENT.md)
+1. 绑定个人机器路径的说明
+2. 一次性部署记录
+3. 与当前仓库状态无关的历史性能结论
+4. 容易让人误以为接口已经完全对齐的描述

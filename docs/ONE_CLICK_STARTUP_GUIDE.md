@@ -1,283 +1,156 @@
-# 一键启动指南 / One-Click Startup Guide
+# 启动指南
 
-## 概述 / Overview
+本文档只保留当前仓库里仍然存在、且相对可用的启动入口。旧文档中提到的 `start-simple.sh`、`start-langchain.sh`、`start-full-langchain.sh` 不再作为当前项目入口使用。
 
-本项目提供多种一键启动脚本，根据不同的测试需求选择使用：
+## 启动模式
 
-This project provides multiple one-click startup scripts for different testing needs:
+### 模式一：本地综合联调
 
-| 脚本 Script | 用途 Purpose | 复杂度 Complexity | 推荐场景 Recommended Use |
-|------------|-------------|-------------------|-------------------------|
-| `./start-simple.sh` | 简化版快速测试 | 低 Low | UI开发、基础功能测试 |
-| `./start-langchain.sh` | 完整LangChain架构 | 高 High | RAG/Agent功能测试 |
-| `./quick_start.sh` | Docker容器化部署 | 中 Medium | 生产环境模拟 |
-
-## 🚀 快速开始 / Quick Start
-
-### 方法一：简化版启动（推荐用于快速测试）
-### Method 1: Simple Startup (Recommended for Quick Testing)
+脚本：
 
 ```bash
-# 一键启动所有服务
-# Start all services with one command
-./start-simple.sh
+./start-system.sh
+```
 
-# 停止所有服务
-# Stop all services
+用途：
+
+- 本地完整链路调试
+- 尝试拉起前端、主后端、本地 LLM，以及部分 Docker 基础设施
+
+典型端口：
+
+- Frontend：`5173`
+- Main API：`8000`
+- LLM：`8001`
+- Embedding：`8002`
+- Reranking：`8004`
+- Doc Processor：`5003`
+- ChromaDB：`8005`
+- PostgreSQL：`5432`
+- Redis：`6379`
+
+说明：
+
+1. 这是当前仓库里最接近“开发态一键启动”的入口。
+2. 脚本会尝试创建 `.env`、清理端口、拉起 Docker 基础设施、再启动应用层服务。
+3. 由于仓库仍存在配置漂移，这个脚本适合调试，不应直接视为生产启动方案。
+
+### 模式二：分开启动 API 与前端
+
+脚本：
+
+```bash
+./start-api-noproxy.sh
+./start-frontend-only.sh
+```
+
+用途：
+
+- 在已有独立 AI 服务的机器上单独启动应用层
+- 排查代理、端口、环境变量问题
+- 分离前后端调试
+
+典型端口：
+
+- Frontend：`5173`
+- Main API：`8888`
+- LLM：`8001`
+- Embedding：`8010`
+- Reranking：`8012`
+
+说明：
+
+1. 这组脚本更接近 Ubuntu/生产风格的服务布局。
+2. `start-api-noproxy.sh` 会主动清理代理变量，并显式注入 LLM、Embedding、Reranking 地址。
+3. 如果你的目标是远程主机排障，这一组通常比 `start-system.sh` 更直接。
+
+### 模式三：Ubuntu AMD GPU 生产风格启动
+
+脚本：
+
+```bash
+deployment/scripts/start-ubuntu-services.sh
+```
+
+用途：
+
+- Ubuntu 22.04 主机
+- 已有或计划接入独立 LLM / Embedding / Reranking 服务
+- 接近生产的本机服务化运行方式
+
+典型端口：
+
+- Frontend：`5173`
+- Main API：`8888`
+- ChromaDB：`8005`
+- PostgreSQL：`5432`
+- Redis：`6379`
+- LLM：`8001`
+- Embedding：`8010`
+- Reranking：`8012`
+
+说明：
+
+1. 这是当前仓库里最明确的“生产风格”启动入口。
+2. 更完整的生产约束见 `production/`、`deployment/` 和 `docs/chensha_部署与基础设施规则.md`。
+
+## 停止方式
+
+### 开发态停止
+
+```bash
 ./stop-services.sh
 ```
 
-**特点 Features:**
-- ✅ 自动安装依赖 / Auto-install dependencies
-- ✅ 自动修复已知问题 / Auto-fix known issues
-- ✅ 自动清理端口冲突 / Auto-clean port conflicts
-- ✅ 实时日志监控 / Real-time log monitoring
-- ✅ 服务健康检查 / Service health checks
+适用：
 
-### 方法二：完整LangChain架构启动
-### Method 2: Full LangChain Architecture
+- `start-system.sh` 拉起的本地服务
+
+### Ubuntu 服务停止
 
 ```bash
-# 启动完整系统（包含RAG、Agent等）
-# Start full system (including RAG, Agent, etc.)
-./start-langchain.sh
-
-# 检查系统就绪状态
-# Check system readiness
-./check-readiness.sh
+deployment/scripts/stop-ubuntu-services.sh
 ```
 
-**特点 Features:**
-- ✅ 完整功能支持 / Full feature support
-- ✅ Docker容器化 / Docker containerized
-- ✅ 微服务架构 / Microservices architecture
-- ⚠️ 需要更多资源 / Requires more resources
+适用：
 
-## 📋 服务架构 / Service Architecture
+- Ubuntu 主机上的 API、前端、ChromaDB、Redis 等服务清理
 
-### 简化版架构 (start-simple.sh)
-```
-┌─────────────────────────────────────────┐
-│   Frontend (React)                      │
-│   http://localhost:3000                 │
-└─────────────────┬───────────────────────┘
-                  │ HTTP/REST
-┌─────────────────▼───────────────────────┐
-│   Backend API (FastAPI)                 │
-│   http://localhost:8080                 │
-│   - /api/v1/chat                        │
-│   - /health                             │
-│   - /docs                               │
-└─────────────────┬───────────────────────┘
-                  │ HTTP/REST
-┌─────────────────▼───────────────────────┐
-│   Local LLM (Qwen3-8B-MLX)             │
-│   http://localhost:8001                 │
-│   - OpenAI Compatible API               │
-└─────────────────────────────────────────┘
-```
+## 当前推荐顺序
 
-### 完整架构 (start-langchain.sh)
-```
-┌─────────────────────────────────────────┐
-│   Frontend (React)                      │
-│   http://localhost:5173                 │
-└─────────────────┬───────────────────────┘
-                  │ WebSocket + REST
-┌─────────────────▼───────────────────────┐
-│   Main App (FastAPI + LangChain)        │
-│   http://localhost:8000                 │
-│   - RAG Chain                           │
-│   - Agent System                        │
-│   - Document Processing                 │
-└──────┬──────────┬──────────┬────────────┘
-       │          │          │
-┌──────▼────┐ ┌──▼───┐ ┌────▼────┐
-│ ChromaDB  │ │Redis │ │PostgreSQL│
-│ (Vector)  │ │Cache │ │Database  │
-└───────────┘ └──────┘ └──────────┘
-```
+如果你是第一次接手这个项目，建议按下面顺序：
 
-## 🛠️ 启动脚本详解 / Startup Script Details
+1. 先看 `README.md`
+2. 再看 `docs/chensha_运行依赖分析.md`
+3. 然后根据目标环境选择启动模式
 
-### start-simple.sh 功能
-### start-simple.sh Features
+建议选择：
 
-1. **依赖检查与安装 / Dependency Check & Install**
-   ```bash
-   # 自动检测并安装缺失的Python包
-   # Auto-detect and install missing Python packages
-   - flask
-   - mlx-lm
-   - fastapi
-   - uvicorn
-   - httpx
-   - pydantic
-   ```
+- 本地开发：`./start-system.sh`
+- 远程 Ubuntu / 已有 AI 服务：`./start-api-noproxy.sh` + `./start-frontend-only.sh`
+- 接近生产部署：`deployment/scripts/start-ubuntu-services.sh`
 
-2. **端口清理 / Port Cleanup**
-   ```bash
-   # 自动清理占用的端口
-   # Auto-clean occupied ports
-   - 3000 (Frontend)
-   - 8080 (Backend)
-   - 8001 (LLM)
-   ```
+## 已失效或不再推荐的入口
 
-3. **问题修复 / Issue Fixes**
-   ```bash
-   # 自动修复已知问题
-   # Auto-fix known issues
-   - highlight.js import error
-   - API endpoint configuration
-   ```
+以下内容在旧文档里出现过，但不应再作为当前入口：
 
-4. **服务启动顺序 / Service Startup Order**
-   ```
-   1. LLM Server (port 8001)
-      ↓ wait for ready
-   2. Backend API (port 8080)
-      ↓ wait for ready
-   3. Frontend (port 3000)
-      ↓ wait for ready
-   4. Health checks
-   ```
+- `./start-simple.sh`
+- `./start-langchain.sh`
+- `./start-full-langchain.sh`
+- 以 `3000` / `8080` 为当前主链路默认端口的说明
+- 仍把项目描述为“仅 Dify 配置工程”的启动说明
 
-## 📊 服务状态检查 / Service Status Check
+## 已知注意事项
 
-### 手动检查服务状态
-### Manual Service Status Check
+1. 开发态和生产态目前存在两套主后端端口：
+   - 开发常见：`8000`
+   - 生产基线：`8888`
+2. `frontend`、`main-app`、AI 服务之间仍有部分变量命名和协议待收敛。
+3. 根目录 `docker-compose.yml` 可用于理解整体架构，但不代表所有服务都能零修正直接构建。
 
-```bash
-# 检查LLM服务
-# Check LLM service
-curl http://localhost:8001/health
+## 相关文档
 
-# 检查后端API
-# Check backend API
-curl http://localhost:8080/health
-
-# 检查前端
-# Check frontend
-curl http://localhost:3000
-
-# 测试聊天功能
-# Test chat functionality
-curl -X POST http://localhost:8080/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello"}'
-```
-
-### 查看日志
-### View Logs
-
-```bash
-# 实时查看所有日志
-# View all logs in real-time
-tail -f logs/*.log
-
-# 查看特定服务日志
-# View specific service logs
-tail -f logs/llm.log      # LLM日志
-tail -f logs/backend.log  # 后端日志
-tail -f logs/frontend.log # 前端日志
-```
-
-## 🔧 故障排除 / Troubleshooting
-
-### 常见问题及解决方案
-### Common Issues and Solutions
-
-| 问题 Issue | 原因 Cause | 解决方案 Solution |
-|-----------|-----------|------------------|
-| 端口被占用 | 其他进程占用端口 | 运行 `./stop-services.sh` 或手动 `kill $(lsof -ti:PORT)` |
-| LLM启动失败 | 模型文件缺失 | 确保已运行模型转换脚本 |
-| 前端报错 | 依赖未安装 | 在frontend目录运行 `npm install` |
-| API连接失败 | CORS问题 | 检查backend的CORS配置 |
-| 内存不足 | LLM占用内存过大 | 关闭其他应用或使用更小的模型 |
-
-### 手动启动流程（如果脚本失败）
-### Manual Startup Process (If Script Fails)
-
-```bash
-# 1. 启动LLM服务
-cd /Users/arthurren/projects/drass
-python qwen3_api_server.py &
-
-# 2. 启动后端API
-python simple_backend.py --port 8080 &
-
-# 3. 修复前端问题
-cd frontend
-# 编辑 src/components/ChatInterface/MarkdownRenderer.tsx
-# 删除 import 'highlight.js/styles/github-dark.css'
-# 编辑 src/components/ChatInterface/ChatInterface.tsx
-# 更新 fetch URL 为 http://localhost:8080/api/v1/chat
-
-# 4. 启动前端
-npm run dev
-```
-
-## 📈 性能优化建议 / Performance Optimization
-
-1. **内存管理**
-   - LLM服务约占用 8-10GB 内存
-   - 建议系统至少有 16GB RAM
-   - 可通过环境变量限制模型内存使用
-
-2. **端口配置**
-   - 可通过环境变量自定义端口
-   ```bash
-   export FRONTEND_PORT=3001
-   export BACKEND_PORT=8081
-   export LLM_PORT=8002
-   ./start-simple.sh
-   ```
-
-3. **日志管理**
-   - 日志文件会持续增长
-   - 建议定期清理：`rm -rf logs/*.log`
-   - 或使用日志轮转：`logrotate`
-
-## 🚢 生产部署 / Production Deployment
-
-生产环境建议使用Docker Compose部署：
-
-For production, use Docker Compose deployment:
-
-```bash
-# 使用Docker Compose启动
-# Start with Docker Compose
-docker-compose up -d
-
-# 或使用Kubernetes
-# Or use Kubernetes
-kubectl apply -f k8s/
-```
-
-详见 [AWS部署文档](./AWS_DEPLOYMENT_RESOURCES.md)
-
-See [AWS Deployment Guide](./AWS_DEPLOYMENT_RESOURCES.md) for details.
-
-## 📝 更新历史 / Update History
-
-| 日期 Date | 版本 Version | 更新内容 Updates |
-|----------|-------------|-----------------|
-| 2025-01-12 | v1.0 | 初始版本，简化启动流程 |
-| 2025-01-12 | v1.1 | 添加自动问题修复功能 |
-| 2025-01-12 | v1.2 | 集成健康检查和日志监控 |
-
-## 🤝 贡献指南 / Contributing
-
-欢迎提交问题和改进建议：
-
-Welcome to submit issues and suggestions:
-
-1. Fork 本仓库 / Fork this repository
-2. 创建功能分支 / Create feature branch
-3. 提交更改 / Commit changes
-4. 发起 Pull Request / Create Pull Request
-
-## 📄 许可证 / License
-
-MIT License - 详见 [LICENSE](../LICENSE) 文件
+- [README](../README.md)
+- [运行依赖分析](./chensha_运行依赖分析.md)
+- [部署与基础设施规则](./chensha_部署与基础设施规则.md)
+- `docs/文档清理与校正说明.md`

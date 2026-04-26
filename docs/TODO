@@ -1,51 +1,38 @@
-[x] Define the project structure:
-    - it is a Dify project, for the dify applications define in the dify platform
-    - we need to use the project to config the dify properties.
-    - dify application configurations etc. 
-    - So the project folders should contains all of above. 
+# TODO 历史说明
 
-[x] Implement project structure:
-    - Create config/ directory for Dify configurations
-    - Create apps/ directory for application definitions
-    - Create templates/ directory for reusable configurations
-    - Create scripts/ directory for automation tools
-    - Update README with project documentation
-    - Create configuration examples
+> 状态：旧项目初始化清单，已过时，不再作为当前项目事实。
 
-[x] Set up Dify application configuration templates:
-    - Basic application template
-    - Workflow configuration template
-    - API integration template
-    - Environment configuration template
+这份文件原本记录的是项目最早期的一轮任务拆解，其中大量内容直接把 Drass 定义成 Dify 配置工程。该定位已经不符合当前仓库现实。
 
-[x] Create Docker containerization for the Dify application:
-    - Create Dockerfile for Dify application
-    - Create docker-compose.yml for Dify application
-    - Create docker-compose.override.yml for Dify application
-    - Create database initialization scripts
-    - Create Nginx reverse proxy configuration
-    - Create monitoring and logging setup
-    - Create Docker management scripts
+## 为什么这份文件不再可信
 
-[x] Implement complete Dify platform deployment:
-    - Redesign architecture based on official Dify documentation
-    - Create one-click deployment script (deploy.sh)
-    - Implement automatic Dify platform deployment
-    - Add automatic admin account setup
-    - Create automatic Drass application import
-    - Add comprehensive monitoring and security services
-    - Create production-ready Docker configuration
+旧清单中的主要问题：
 
-[] Future Enhancements:
-    - Add CI/CD pipeline configuration
-    - Create Kubernetes deployment manifests
-    - Add monitoring and alerting rules
-    - Implement backup and restore functionality
-    - Add user management and authentication
-    - Create web-based configuration interface
-    - Add performance testing and optimization
-    - Implement multi-region deployment support
-    - Add security scanning and compliance checks
-    - Create disaster recovery procedures
-    - Add multi-tenant support
-    - Implement advanced workflow automation
+1. 把项目定义成 Dify project
+2. 把 `config/`、`apps/`、`templates/` 当成核心主线
+3. 把 Docker 化目标写成 “Dify application” 部署
+4. 完全没有反映当前多服务系统的实际结构
+
+## 当前更准确的项目定位
+
+当前 Drass 是一个多服务系统，主链路是：
+
+```text
+Frontend
+  -> Main API
+     -> LLM
+     -> Embedding
+     -> Reranking
+     -> ChromaDB
+     -> Redis / PostgreSQL
+```
+
+## 当前建议
+
+1. 这份 TODO 仅保留为历史痕迹。
+2. 不再根据它判断当前项目结构。
+3. 当前事实请以以下文档为准：
+   - `README.md`
+   - `docs/ONE_CLICK_STARTUP_GUIDE.md`
+   - `docs/chensha_运行依赖分析.md`
+   - `docs/chensha_部署与基础设施规则.md`

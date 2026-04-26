@@ -1,236 +1,127 @@
-# Drass 微服务组件
+# services 目录说明
 
-本目录包含Drass系统的自定义微服务组件。
+本目录存放 Drass 的服务实现。当前应把这里理解为“业务服务与基础能力服务集合”，而不是单一的微服务样例目录。
 
-## 服务列表
+## 当前目录
 
-### 1. doc-processor (文档处理服务)
+| 目录 | 作用 | 现状 |
+| --- | --- | --- |
+| `main-app/` | 主后端 API、RAG、审计、文档、配置 | 核心服务 |
+| `doc-processor/` | 文档转换、OCR、切分 | 可独立运行 |
+| `embedding-service/` | 文本嵌入服务 | 可独立运行 |
+| `reranking-service/` | 检索重排服务 | 可独立运行 |
+| `llm-gateway/` | 多模型网关 | 可选增强 |
+| `scheduler/` | 定时任务样例/辅助服务 | 非当前主链路 |
+| `data/` | 服务相关数据目录 | 持久化内容 |
 
-**功能**：将各种格式的文档转换为Markdown格式
+## 核心关系
 
-**端口**：5003
-
-**支持格式**：
-- 文档：PDF, DOC, DOCX, ODT, RTF, TXT, MD
-- 表格：XLS, XLSX, CSV, ODS  
-- 演示：PPT, PPTX, ODP
-- 图片：JPG, JPEG, PNG, GIF, BMP, TIFF（OCR支持）
-
-**API端点**：
-- `GET /health` - 健康检查
-- `POST /convert` - 单文档转换
-- `POST /batch_convert` - 批量文档转换
-
-**环境变量**：
-```bash
-MAX_FILE_SIZE=50MB              # 最大文件大小
-OCR_ENABLED=true                # 启用OCR
-OCR_LANGUAGE=chi_sim,eng        # OCR语言（中文简体+英文）
-PANDOC_ENABLED=true             # 启用Pandoc转换
+```text
+main-app
+  -> doc-processor
+  -> embedding-service
+  -> reranking-service
+  -> ChromaDB
+  -> Redis
+  -> PostgreSQL
 ```
 
-**使用示例**：
-```bash
-# 转换单个文档
-curl -X POST http://localhost:5003/convert \
-  -F "file=@document.pdf"
+## 当前更准确的服务说明
 
-# 批量转换
-curl -X POST http://localhost:5003/batch_convert \
-  -F "files=@doc1.pdf" \
-  -F "files=@doc2.docx"
-```
+### 1. `main-app`
 
-### 2. scheduler (定时任务调度器)
+职责：
 
-**功能**：执行定时任务，包括知识库更新、数据清理和备份
+- 提供主 API
+- 协调 LLM、Embedding、Reranking、Vector Store
+- 承担文档、审计、设置、监控等业务接口
 
-**定时任务**：
-- 知识库更新：每天凌晨2点
-- 数据清理：每周日凌晨3点
-- 数据备份：每天凌晨4点
-- 健康检查：每5分钟
+注意：
 
-**环境变量**：
-```bash
-KNOWLEDGE_BASE_UPDATE_CRON=0 2 * * *    # 知识库更新时间
-CLEANUP_CRON=0 3 * * 0                  # 清理任务时间
-BACKUP_CRON=0 4 * * *                   # 备份任务时间
-API_URL=http://api:5001                 # Dify API地址
-DIFY_API_KEY=your-api-key              # API密钥
-```
+- 开发态常见端口是 `8000`
+- 生产风格常见端口是 `8888`
 
-**Cron表达式格式**：
-```
-分 时 日 月 周
-0  2  *  *  *  = 每天凌晨2点
-0  3  *  *  0  = 每周日凌晨3点
-*/5 * * * *    = 每5分钟
-```
+### 2. `doc-processor`
 
-## 本地开发
+职责：
 
-### doc-processor服务
+- 文档转 Markdown
+- PDF 文本提取
+- OCR
+- 文本切分
 
-```bash
-cd doc-processor
+常见端口：
 
-# 安装依赖
-pip install -r requirements.txt
+- `5003`
 
-# 安装系统依赖（Ubuntu/Debian）
-apt-get install pandoc tesseract-ocr tesseract-ocr-chi-sim
+说明：
 
-# 运行服务
-python app.py
-```
+- 当前仓库里它是独立服务，不是 `main-app` 的内嵌模块。
+- 与 `main-app` 的调用地址必须通过 `DOC_PROCESSOR_URL` 或等效配置对齐。
 
-### scheduler服务
+### 3. `embedding-service`
 
-```bash
-cd scheduler
+职责：
 
-# 安装依赖
-pip install -r requirements.txt
+- 为文本生成向量
 
-# 设置环境变量
-export API_URL=http://localhost:5001
-export DIFY_API_KEY=your-api-key
+常见端口：
 
-# 运行服务
-python scheduler.py
-```
+- 开发风格：`8002`
+- Ubuntu/生产风格：`8010`
 
-## Docker构建
+说明：
 
-### 构建单个服务
+- 仓库里保留了不止一种部署约定。
+- `main-app` 与它之间的请求/响应格式需要统一，不能只看端口一致。
 
-```bash
-# 构建doc-processor
-docker build -t drass-doc-processor ./doc-processor
+### 4. `reranking-service`
 
-# 构建scheduler
-docker build -t drass-scheduler ./scheduler
-```
+职责：
 
-### 使用docker-compose构建
+- 对检索结果做重排
 
-在项目根目录运行：
+常见端口：
 
-```bash
-docker-compose build doc-processor scheduler
-```
+- 开发风格：`8004`
+- Ubuntu/生产风格：`8012`
 
-## 服务监控
+说明：
 
-### 健康检查
+- 它属于增强服务，不建议承载唯一业务状态。
 
-```bash
-# doc-processor健康检查
-curl http://localhost:5003/health
+### 5. `llm-gateway`
 
-# 查看scheduler日志
-docker logs drass-scheduler
-```
+职责：
 
-### 日志位置
+- 统一多模型提供方入口
 
-- doc-processor: 输出到stdout
-- scheduler: `/app/logs/scheduler.log`
+说明：
 
-## 故障排除
+- 当前不在所有部署路径中启用
+- 更适合作为扩展能力，而不是默认主链路
 
-### doc-processor常见问题
+### 6. `scheduler`
 
-1. **OCR不工作**
-   - 确认OCR_ENABLED=true
-   - 检查tesseract是否正确安装
-   - 验证语言包是否安装（tesseract-ocr-chi-sim）
+职责：
 
-2. **PDF转换失败**
-   - 检查poppler-utils是否安装
-   - 尝试使用pandoc作为备选方案
+- 预留给定时任务、清理、备份等后台任务
 
-3. **Office文档转换失败**
-   - 确认libreoffice已安装
-   - 检查文件权限
+说明：
 
-### scheduler常见问题
+- 当前不是仓库默认主启动链路的一部分
+- 旧文档中把它写成 Dify API 调度器的描述已经不再适合作为项目主叙事
 
-1. **任务未执行**
-   - 检查cron表达式格式
-   - 验证API_URL和API_KEY配置
-   - 查看日志文件
+## 文档已去掉的失效内容
 
-2. **备份失败**
-   - 确认有足够的磁盘空间
-   - 检查备份目录权限
-   - 验证API连接
+本次已移除或不再强调以下旧规则：
 
-## 扩展开发
+- 把 `scheduler` 直接写成当前系统主流程的一部分
+- 把 `API_URL=http://api:5001` 之类旧 Dify 风格地址当作主链路说明
+- 把本目录仅描述成“自定义微服务组件”，忽略主后端的中枢地位
 
-### 添加新的文档格式支持
+## 相关文档
 
-编辑`doc-processor/app.py`，在`DocumentConverter`类中添加新的转换方法：
-
-```python
-def _convert_new_format(self, file_path: str) -> str:
-    """转换新格式"""
-    # 实现转换逻辑
-    return markdown_content
-```
-
-### 添加新的定时任务
-
-编辑`scheduler/scheduler.py`，在`TaskScheduler`类中添加新任务：
-
-```python
-def new_task(self):
-    """新的定时任务"""
-    # 实现任务逻辑
-    pass
-
-# 在_setup_jobs中注册
-self.scheduler.add_job(
-    func=self.new_task,
-    trigger=CronTrigger.from_crontab('0 5 * * *'),
-    id='new_task',
-    name='New Task'
-)
-```
-
-## 性能优化
-
-### doc-processor优化
-
-- 使用缓存避免重复转换
-- 实施文件大小限制
-- 使用异步处理大文件
-- 配置worker数量
-
-### scheduler优化
-
-- 避免任务重叠执行
-- 实施任务超时机制
-- 使用分布式锁避免重复执行
-- 监控任务执行时间
-
-## 安全注意事项
-
-1. **文件上传安全**
-   - 限制文件大小
-   - 验证文件类型
-   - 病毒扫描
-   - 沙箱环境执行
-
-2. **API安全**
-   - 使用强密钥
-   - 实施访问控制
-   - 日志审计
-   - 限流保护
-
-3. **数据安全**
-   - 加密敏感数据
-   - 定期备份
-   - 安全删除临时文件
-   - 权限最小化原则
+- [项目入口](../README.md)
+- [启动指南](../docs/ONE_CLICK_STARTUP_GUIDE.md)
+- [运行依赖分析](../docs/chensha_运行依赖分析.md)

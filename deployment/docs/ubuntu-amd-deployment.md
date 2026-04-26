@@ -1,368 +1,95 @@
-# Ubuntu AMD GPU Deployment Guide
+# Ubuntu AMD GPU 部署说明
 
-This guide explains how to deploy the Drass system on Ubuntu 22.04 with AMD GPUs using existing vLLM model services.
+> 状态：环境专用部署说明。可作为 `deployment/scripts/start-ubuntu-services.sh` 的配套阅读文件，但不应被理解为“对所有 Ubuntu 机器都直接适用的标准部署手册”。
 
-## System Requirements
+## 文档范围
 
-- Ubuntu 22.04 LTS
-- 2x AMD GPUs (ROCm compatible)
-- 32GB+ RAM
-- 200GB+ SSD storage
-- Python 3.8+
-- Node.js 16+
+这份说明只描述当前仓库里可以确认的 Ubuntu AMD GPU 部署线索：
 
-## Pre-deployed Services
+1. 仓库存在 `deployment/scripts/start-ubuntu-services.sh`。
+2. 这套脚本明显面向一台已经准备过的宿主机环境。
+3. 文档应说明脚本的真实假设和限制，而不是继续把某一台机器上的部署结果写成通用事实。
 
-Your server already has three vLLM services running:
+## 当前可确认的部署特征
 
-1. **LLM Service (Port 8001)**
-   - Model: DeepSeek-R1-0528-Qwen3-8B
-   - GPU Memory: 45%
-   - Tensor Parallel: 2 GPUs
-   - Max Model Length: 12288 tokens
+### 1. 部署形态
 
-2. **Embedding Service (Port 8010)**
-   - Model: Qwen3-Embedding-8B
-   - GPU Memory: 30%
-   - Tensor Parallel: 2 GPUs
-   - Task: Embeddings
+这条路径不是完整容器化部署，而是“宿主机进程 + 本地依赖 + 外部模型服务”的混合方式。
 
-3. **Reranking Service (Port 8012)**
-   - Model: Qwen3-Reranker-8B
-   - GPU Memory: 30%
-   - Tensor Parallel: 2 GPUs
-   - Task: Reranking/Scoring
-
-## Deployment Steps
-
-### 1. Prerequisites Installation
-
-```bash
-# Update system packages
-sudo apt update && sudo apt upgrade -y
-
-# Install Python dependencies
-sudo apt install -y python3-pip python3-venv python3-dev
-
-# Install Node.js (if not installed)
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# Install PostgreSQL
-sudo apt install -y postgresql postgresql-contrib
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
-
-# Install Redis
-sudo apt install -y redis-server
-sudo systemctl start redis-server
-sudo systemctl enable redis-server
-
-# Install other dependencies
-sudo apt install -y git curl wget build-essential
+```mermaid
+flowchart TD
+    A[Ubuntu AMD GPU 主机] --> B[start-ubuntu-services.sh]
+    B --> C[Frontend 5173]
+    B --> D[Main API 8888]
+    B --> E[ChromaDB 8005]
+    D --> F[LLM Service 8001]
+    D --> G[Embedding Service 8010]
+    D --> H[Reranking Service 8012]
+    D --> I[PostgreSQL 5432]
+    D --> J[Redis 6379]
 ```
 
-### 2. Database Setup
-
-```bash
-# Create database and user
-sudo -u postgres psql << EOF
-CREATE USER drass_user WITH PASSWORD 'your_secure_password';
-CREATE DATABASE drass_production OWNER drass_user;
-GRANT ALL PRIVILEGES ON DATABASE drass_production TO drass_user;
-EOF
-```
-
-### 3. Clone and Setup Drass
-
-```bash
-# Clone repository
-cd /home/qwkj
-git clone https://github.com/renzhichao/drass.git
-cd drass
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install Python dependencies
-pip install -r services/main-app/requirements.txt
-pip install chromadb
-
-# Install frontend dependencies
-cd frontend
-npm install
-npm run build
-cd ..
-```
-
-### 4. Configuration
-
-Create environment file `.env.production`:
-
-```bash
-# LLM Configuration (using existing vLLM service)
-LLM_PROVIDER=vllm
-LLM_MODEL=vllm
-LLM_BASE_URL=http://localhost:8001/v1
-LLM_API_KEY=123456
-
-# Embedding Configuration (using existing service)
-EMBEDDING_PROVIDER=openai
-EMBEDDING_MODEL=Qwen3-Embedding-8B
-EMBEDDING_API_KEY=123456
-EMBEDDING_API_BASE=http://localhost:8010/v1
-
-# Reranking Configuration (using existing service)
-RERANKING_ENABLED=true
-RERANKING_PROVIDER=local
-RERANKING_MODEL=Qwen3-Reranker-8B
-RERANKING_API_KEY=123456
-RERANKING_API_BASE=http://localhost:8012/v1
-
-# Database Configuration
-DATABASE_URL=postgresql://drass_user:your_secure_password@localhost:5432/drass_production
-DB_PASSWORD=your_secure_password
-
-# Redis Configuration
-REDIS_URL=redis://localhost:6379/0
-REDIS_PASSWORD=your_redis_password
-
-# Vector Store Configuration
-VECTOR_STORE_TYPE=chromadb
-CHROMA_PERSIST_DIRECTORY=/home/qwkj/drass/data/chromadb
-
-# Security Keys (generate secure random values)
-SECRET_KEY=your-secret-key-here
-JWT_SECRET=your-jwt-secret-here
-ENCRYPTION_KEY=your-encryption-key-here
-
-# Application Settings
-DEPLOYMENT_ENV=production
-NODE_ENV=production
-LOG_LEVEL=INFO
-```
-
-### 5. Start Services
-
-Use the provided startup script:
-
-```bash
-cd /home/qwkj/drass
-chmod +x deployment/scripts/start-ubuntu-services.sh
-./deployment/scripts/start-ubuntu-services.sh
-```
-
-Or manually start services:
-
-```bash
-# Start ChromaDB
-python -m chromadb.app --path /home/qwkj/drass/data/chromadb --port 8005 --host 0.0.0.0 &
-
-# Start Backend API
-cd services/main-app
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 &
-
-# Serve Frontend
-cd frontend
-npx serve -s dist -l 5173 &
-```
-
-### 6. Verify Deployment
-
-Check all services are running:
-
-```bash
-# Check service ports
-lsof -i :8001  # vLLM LLM
-lsof -i :8010  # Embedding
-lsof -i :8012  # Reranking
-lsof -i :8005  # ChromaDB
-lsof -i :8000  # API
-lsof -i :5173  # Frontend
-lsof -i :5432  # PostgreSQL
-lsof -i :6379  # Redis
-
-# Test API health
-curl http://localhost:8000/health
-
-# Test LLM service
-curl -X POST http://localhost:8001/v1/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer 123456" \
-  -d '{
-    "model": "vllm",
-    "prompt": "Hello, how are you?",
-    "max_tokens": 50
-  }'
-```
-
-### 7. Service Management
-
-#### Start All Services
-```bash
-/home/qwkj/drass/deployment/scripts/start-ubuntu-services.sh
-```
-
-#### Stop Services
-```bash
-# Stop Drass services
-pkill -f "uvicorn app.main:app"
-pkill -f "chromadb.app"
-pkill -f "serve -s dist"
-
-# Stop vLLM services (if needed)
-pkill -f "vllm serve"
-pkill -f "vllm.entrypoints.openai.api_server"
-```
-
-#### Monitor Logs
-```bash
-# View logs
-tail -f /home/qwkj/drass/logs/drass-api.log
-tail -f /home/qwkj/drass/logs/vllm-llm.log
-tail -f /home/qwkj/drass/logs/chromadb.log
-
-# System resource monitoring
-rocm-smi  # AMD GPU monitoring
-htop      # CPU and memory
-```
-
-### 8. Performance Optimization
-
-#### GPU Memory Management
-
-The current setup uses:
-- LLM: 45% GPU memory (both GPUs)
-- Embedding: 30% GPU memory (both GPUs)
-- Reranking: 30% GPU memory (both GPUs)
-
-Total GPU utilization is managed to prevent OOM errors.
-
-#### Database Optimization
-
-```sql
--- Optimize PostgreSQL for production
-ALTER SYSTEM SET shared_buffers = '4GB';
-ALTER SYSTEM SET effective_cache_size = '12GB';
-ALTER SYSTEM SET maintenance_work_mem = '1GB';
-ALTER SYSTEM SET work_mem = '16MB';
-ALTER SYSTEM SET max_connections = 200;
-
--- Reload configuration
-SELECT pg_reload_conf();
-```
-
-#### Redis Optimization
-
-Edit `/etc/redis/redis.conf`:
-
-```conf
-maxmemory 4gb
-maxmemory-policy allkeys-lru
-save ""  # Disable persistence for better performance
-```
-
-### 9. Security Considerations
-
-1. **Firewall Configuration**
-```bash
-# Allow only necessary ports
-sudo ufw allow 22/tcp     # SSH
-sudo ufw allow 5173/tcp   # Frontend
-sudo ufw allow 8000/tcp   # API
-sudo ufw enable
-```
-
-2. **API Keys**
-- Keep vLLM API keys secure
-- Use environment variables for sensitive data
-- Rotate keys regularly
-
-3. **SSL/TLS Setup** (Optional)
-```bash
-# Install Nginx for reverse proxy with SSL
-sudo apt install nginx certbot python3-certbot-nginx
-
-# Configure Nginx (see nginx config below)
-sudo certbot --nginx -d your-domain.com
-```
-
-### 10. Monitoring Setup
-
-#### Prometheus + Grafana (Optional)
-```bash
-# Install Prometheus
-wget https://github.com/prometheus/prometheus/releases/download/v2.45.0/prometheus-2.45.0.linux-amd64.tar.gz
-tar xvf prometheus-2.45.0.linux-amd64.tar.gz
-cd prometheus-2.45.0.linux-amd64
-./prometheus --config.file=prometheus.yml &
-
-# Install Grafana
-sudo apt-get install -y software-properties-common
-sudo add-apt-repository "deb https://packages.grafana.com/oss/deb stable main"
-sudo apt-get update
-sudo apt-get install grafana
-sudo systemctl start grafana-server
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **GPU Memory Errors**
-   - Reduce `gpu_memory_utilization` in vLLM services
-   - Restart services to free memory
-
-2. **Port Already in Use**
-   ```bash
-   # Find and kill process using port
-   lsof -ti:PORT | xargs kill -9
-   ```
-
-3. **Database Connection Issues**
-   ```bash
-   # Check PostgreSQL status
-   sudo systemctl status postgresql
-
-   # Check connection
-   psql -U drass_user -h localhost -d drass_production
-   ```
-
-4. **vLLM Service Failures**
-   - Check ROCm installation: `rocm-smi`
-   - Verify model paths exist
-   - Check GPU visibility: `echo $HIP_VISIBLE_DEVICES`
-
-## Maintenance
-
-### Daily Tasks
-- Monitor log files for errors
-- Check service health endpoints
-- Monitor GPU memory usage
-
-### Weekly Tasks
-- Database backup
-- Log rotation
-- Update dependencies
-
-### Backup Script
-```bash
-#!/bin/bash
-# Backup database
-pg_dump -U drass_user drass_production > /backup/drass_$(date +%Y%m%d).sql
-
-# Backup vector store
-tar czf /backup/chromadb_$(date +%Y%m%d).tar.gz /home/qwkj/drass/data/chromadb
-
-# Backup configuration
-tar czf /backup/config_$(date +%Y%m%d).tar.gz /home/qwkj/drass/.env* /home/qwkj/drass/deployment/configs/
-```
-
-## Support
-
-For issues specific to this deployment:
-1. Check logs in `/home/qwkj/drass/logs/`
-2. Verify all services are running
-3. Check GPU memory with `rocm-smi`
-4. Review environment variables in `.env.production`
+### 2. 脚本内已写死的环境假设
+
+当前脚本里可以直接看到以下假设：
+
+1. 基础目录写死为 `/home/qwkj/drass`
+2. API 端口按 `8888` 处理
+3. 前端端口按 `5173` 处理
+4. ChromaDB 端口按 `8005` 处理
+5. 默认依赖外部或先行存在的 AI 服务端口：
+   - `8001`：LLM
+   - `8010`：Embedding
+   - `8012`：Reranking
+
+这意味着它更像“某一类目标机器的运维脚本”，而不是一份无需改动即可复用到任意环境的标准部署器。
+
+### 3. 风险点
+
+当前脚本存在几个需要注意的现实风险：
+
+1. 它包含明显的宿主机硬编码路径。
+2. 它把若干端口与运行方式当作既定前提。
+3. 它内部还带有生成最小 API 文件的逻辑，说明这条部署路径并不完全是干净的标准化发布流程。
+
+因此，这份文档不能再继续宣称“只要照步骤执行就得到统一生产环境”。
+
+## 更准确的使用方式
+
+### 部署前检查
+
+执行这条部署路径前，应先核对以下条件：
+
+1. 仓库部署目录是否与脚本中的基础目录一致。
+2. 宿主机是否已经准备好 Python、Node.js、PostgreSQL、Redis。
+3. 外部模型服务是否已经存在并与端口约定一致。
+4. 是否接受 API 运行在 `8888` 而不是其它历史端口。
+5. 是否接受脚本对日志目录、数据目录和局部启动文件的处理方式。
+
+### 推荐阅读顺序
+
+1. `README.md`
+2. `docs/ONE_CLICK_STARTUP_GUIDE.md`
+3. `docs/chensha_运行依赖分析.md`
+4. `docs/chensha_部署与基础设施规则.md`
+5. `deployment/scripts/start-ubuntu-services.sh`
+
+### 推荐执行原则
+
+1. 先把 `.env`、数据库、Redis、模型服务准备好。
+2. 再逐项核对脚本里的路径、端口、日志目录。
+3. 只有在确认目标机器与脚本假设一致时，才直接运行该脚本。
+4. 若目标环境不一致，应复制脚本并按本机环境改造，而不是把文档中的历史路径继续当成标准值。
+
+## 当前不再保留的错误表述
+
+以下内容不再适合作为本文件的主叙事：
+
+1. 把某个固定模型名称、GPU 占用比例写成通用部署事实。
+2. 把 `/home/qwkj/drass` 当成项目默认标准路径。
+3. 把单台机器上的数据库名、用户、密码写成仓库级默认配置。
+4. 把特定环境下的健康检查命令和日志文件路径写成所有环境都成立的事实。
+
+## 当前结论
+
+这份 Ubuntu AMD GPU 文档现在只应承担一个职责：解释仓库内这条部署脚本的真实约束。它不是主项目的统一部署规范，真正的项目级部署规则应以 `docs/chensha_部署与基础设施规则.md` 为准，以脚本和配置文件为最终核对对象。

@@ -1,310 +1,89 @@
-# 磐石数据合规分析系统 - 系统架构文档
+# Drass 系统架构说明
 
-## 📋 概述
+> 状态：已校正为当前项目概览。旧版把某一台 Ubuntu 机器上的脚本执行结果写成了系统统一架构，这并不准确。
 
-本文档详细描述了 `bash deployment/scripts/start-ubuntu-services.sh` 启动脚本的系统架构和组件结构。
+## 项目定位
 
-## 🏗️ 系统架构图
+Drass 当前应被理解为一个多服务的数据合规分析与 RAG 辅助系统，而不是单一脚本、单一部署模式或 Dify 平台封装。
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    磐石数据合规分析系统                          │
-├─────────────────────────────────────────────────────────────────┤
-│  前端层 (Frontend Layer)                                        │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
-│  │   React/Vite    │  │   Material-UI   │  │   TypeScript    │  │
-│  │   Port: 5173    │  │   Components    │  │   Frontend      │  │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│  API网关层 (API Gateway Layer)                                  │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
-│  │   FastAPI       │  │   CORS          │  │   Authentication│  │
-│  │   Port: 8888    │  │   Middleware    │  │   JWT Tokens    │  │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│  AI服务层 (AI Services Layer)                                   │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
-│  │   vLLM LLM      │  │   vLLM Embedding│  │   vLLM Reranking│  │
-│  │   Port: 8001    │  │   Port: 8010    │  │   Port: 8012    │  │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│  数据存储层 (Data Storage Layer)                                │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
-│  │   ChromaDB      │  │   PostgreSQL    │  │   Redis Cache   │  │
-│  │   Port: 8005    │  │   Port: 5432    │  │   Port: 6379    │  │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-```
+系统核心通常包含：
 
-## 🚀 启动流程
+1. 前端应用
+2. 主后端 API
+3. 文档处理链路
+4. 向量检索与知识库
+5. Embedding / Reranking / LLM 等 AI 能力
+6. 部署与生产化辅助脚本
 
-### 1. 初始化阶段
-```bash
-# 配置和目录创建
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-BASE_DIR="/home/qwkj/drass"
-LOG_DIR="$BASE_DIR/logs"
-DATA_DIR="$BASE_DIR/data"
-
-# 创建必要目录
-mkdir -p "$LOG_DIR"
-mkdir -p "$DATA_DIR/chromadb"
-mkdir -p "$DATA_DIR/uploads"
-```
-
-### 2. 服务检查阶段
-```bash
-# 检查已运行的服务
-check_existing_services() {
-    # 检查端口: 5173 (前端), 8888 (API), 8005 (ChromaDB)
-    # 提供重启选项: 1) 重启所有服务 2) 仅启动停止的服务 3) 取消
-}
-```
-
-### 3. 服务启动阶段
-
-#### 3.1 AI服务启动
-```bash
-# vLLM LLM服务 (端口 8001)
-- 模型: DeepSeek-R1-0528-Qwen3-8B
-- 量化: GPTQ-Int4
-- GPU: AMD GPU支持
-- 并行: tensor-parallel-size=2
-
-# vLLM Embedding服务 (端口 8010)  
-- 模型: Qwen3-Embedding-8B
-- 任务: embed
-- GPU: tensor-parallel-size=2
-
-# vLLM Reranking服务 (端口 8012)
-- 模型: Qwen3-Reranker-8B  
-- 任务: embed
-- GPU: tensor-parallel-size=2
-```
-
-#### 3.2 数据存储服务启动
-```bash
-# PostgreSQL (端口 5432)
-- 数据库: langchain_db
-- 用户: langchain/langchain123
-- 用途: 用户数据、文档元数据
-
-# Redis (端口 6379)
-- 用途: 缓存、会话存储
-- 配置: 默认配置
-
-# ChromaDB (端口 8005)
-- 用途: 向量存储
-- 持久化: ./data/chromadb
-- API: RESTful API
-```
-
-#### 3.3 后端API服务启动
-```bash
-# FastAPI后端 (端口 8888)
-- 框架: FastAPI + Uvicorn
-- 工作进程: 1个
-- 事件循环: asyncio
-- 功能: 
-  * 用户认证 (JWT)
-  * 文档管理
-  * 聊天API
-  * 知识库管理
-```
-
-#### 3.4 前端服务启动
-```bash
-# React前端 (端口 5173)
-- 框架: React + Vite
-- UI库: Material-UI
-- 语言: TypeScript
-- 启动方式: quick-start.sh
-```
-
-## 📊 服务依赖关系
+## 当前高层架构
 
 ```mermaid
-graph TD
-    A[前端 React] --> B[后端 FastAPI]
-    B --> C[vLLM LLM服务]
-    B --> D[vLLM Embedding服务]
-    B --> E[vLLM Reranking服务]
-    B --> F[ChromaDB向量存储]
-    B --> G[PostgreSQL数据库]
-    B --> H[Redis缓存]
-    
-    C --> I[DeepSeek-R1模型]
-    D --> J[Qwen3-Embedding模型]
-    E --> K[Qwen3-Reranker模型]
-    
-    F --> L[向量数据]
-    G --> M[用户数据]
-    H --> N[缓存数据]
+flowchart LR
+    A[Frontend] --> B[Main API]
+    B --> C[Document Processor]
+    B --> D[Vector Store / Chroma]
+    B --> E[Embedding Service]
+    B --> F[Reranking Service]
+    B --> G[LLM Service]
+    B --> H[PostgreSQL]
+    B --> I[Redis]
 ```
 
-## 🔧 核心功能模块
+## 运行模式说明
 
-### 1. 用户认证模块
-- **JWT Token管理**
-- **用户注册/登录**
-- **权限控制**
-- **会话管理**
+当前仓库里至少存在三种常见运行模式：
 
-### 2. 文档处理模块
-- **文档上传**
-- **格式转换**
-- **内容提取**
-- **向量化处理**
+### 1. 本地开发联调
 
-### 3. 知识库管理模块
-- **文档索引**
-- **向量搜索**
-- **相似度计算**
-- **重排序优化**
+- 常见入口：`./start-system.sh`
+- 常见端口：前端 `5173`，主 API 常见为 `8000`
+- 特点：开发态，多服务混合启动
 
-### 4. 聊天对话模块
-- **RAG检索增强**
-- **上下文管理**
-- **流式响应**
-- **历史记录**
+### 2. 本机服务化运行
 
-### 5. 合规分析模块
-- **风险识别**
-- **合规检查**
-- **报告生成**
-- **审计日志**
+- 参考入口：`deployment/scripts/start-ubuntu-services.sh`
+- 该路径下 API 常见为 `8888`
+- 特点：带有宿主机路径、日志目录和端口约束
 
-## 🌐 网络端口分配
+### 3. 容器化生产风格部署
 
-| 服务 | 端口 | 协议 | 用途 |
-|------|------|------|------|
-| 前端 | 5173 | HTTP | React开发服务器 |
-| 后端API | 8888 | HTTP | FastAPI应用 |
-| vLLM LLM | 8001 | HTTP | 大语言模型服务 |
-| vLLM Embedding | 8010 | HTTP | 嵌入向量服务 |
-| vLLM Reranking | 8012 | HTTP | 重排序服务 |
-| ChromaDB | 8005 | HTTP | 向量数据库 |
-| PostgreSQL | 5432 | TCP | 关系数据库 |
-| Redis | 6379 | TCP | 缓存数据库 |
+- 参考入口：`deployment/production/docker-compose.prod.yml`
+- 特点：更偏生产化资源组织，而不是单脚本开发启动
 
-## 📁 目录结构
+## 端口理解原则
 
-```
-/home/qwkj/drass/
-├── deployment/scripts/          # 部署脚本
-│   ├── start-ubuntu-services.sh # 主启动脚本
-│   ├── stop-ubuntu-services.sh  # 停止脚本
-│   └── ...
-├── services/main-app/           # 后端API服务
-│   ├── app/                     # FastAPI应用
-│   ├── requirements.txt         # Python依赖
-│   └── ...
-├── frontend/                    # 前端应用
-│   ├── src/                     # React源码
-│   ├── package.json             # Node.js依赖
-│   └── ...
-├── data/                        # 数据目录
-│   ├── chromadb/                # 向量数据库
-│   ├── uploads/                 # 上传文件
-│   └── ...
-├── logs/                        # 日志目录
-├── models/                      # 模型文件
-└── quick-start.sh               # 快速启动脚本
-```
+旧文档最大的问题之一，是把单一路径中的端口写成全项目统一事实。当前更准确的理解应是：
 
-## 🔄 启动顺序
+| 组件 | 常见端口 | 说明 |
+| --- | --- | --- |
+| Frontend | `5173` | 开发态常见 |
+| Main API | `8000` 或 `8888` | 取决于启动路径 |
+| LLM Service | `8001` 或 `1234` | 取决于 provider / 本地模型方案 |
+| Embedding Service | `8002` 或 `8010` | 取决于服务实现与部署模式 |
+| Reranking Service | `8002`、`8004` 或 `8012` | 历史实现与部署路径并存 |
+| ChromaDB | `8005` | 常见向量存储端口 |
+| PostgreSQL | `5432` | 关系数据库 |
+| Redis | `6379` | 缓存 / 限流 / 队列辅助 |
 
-1. **环境检查** → 检查已运行服务
-2. **AI服务** → 启动vLLM服务 (LLM, Embedding, Reranking)
-3. **数据存储** → 启动PostgreSQL, Redis, ChromaDB
-4. **后端API** → 启动FastAPI应用
-5. **前端服务** → 启动React开发服务器
-6. **健康检查** → 验证所有服务状态
+## 当前更应参考的文件
 
-## 🛠️ 配置管理
+如果要了解真实项目，而不是历史快照，优先参考：
 
-### 环境变量
-```bash
-# LLM配置
-LLM_PROVIDER=openai
-OPENAI_API_BASE=http://localhost:8001/v1
-LLM_MODEL=vllm
+1. `README.md`
+2. `docs/chensha_运行依赖分析.md`
+3. `docs/ONE_CLICK_STARTUP_GUIDE.md`
+4. `docs/chensha_部署与基础设施规则.md`
+5. 具体启动脚本与服务配置文件
 
-# 数据库配置
-DATABASE_URL=postgresql://langchain:langchain123@localhost:5432/langchain_db
-REDIS_URL=redis://localhost:6379
+## 本文件不再承诺的内容
 
-# 向量存储配置
-VECTOR_STORE_TYPE=chromadb
-CHROMA_SERVER_HOST=localhost
-CHROMA_SERVER_PORT=8005
-```
+以下说法不再保留：
 
-### 日志配置
-```bash
-# 日志文件位置
-LOG_DIR=/home/qwkj/drass/logs/
-- drass-api.log          # 后端API日志
-- drass-frontend.log     # 前端日志
-- vllm-llm.log          # LLM服务日志
-- chromadb.log          # 向量数据库日志
-```
+1. `/home/qwkj/drass` 是项目默认标准目录。
+2. `start-ubuntu-services.sh` 代表全项目唯一权威架构。
+3. 固定模型名、固定 GPU 占用率、固定数据库账号是仓库级通用事实。
+4. 单次部署现场的日志路径和服务编排可以直接外推到所有环境。
 
-## 🚨 故障排除
+## 结论
 
-### 常见问题
-1. **端口冲突** → 使用 `lsof -i :端口号` 检查
-2. **服务启动失败** → 查看对应日志文件
-3. **GPU内存不足** → 调整 `gpu_memory_utilization` 参数
-4. **依赖缺失** → 运行 `pip install -r requirements.txt`
-
-### 健康检查命令
-```bash
-# 检查所有服务状态
-curl http://localhost:8888/health
-curl http://localhost:8001/v1/models
-curl http://localhost:8005/api/v1
-curl http://localhost:5173
-```
-
-## 📈 性能优化
-
-### GPU优化
-- **tensor-parallel-size=2** → 多GPU并行
-- **gpu_memory_utilization=0.45** → 内存使用率
-- **max_model_len=12288** → 最大序列长度
-
-### 缓存优化
-- **Redis缓存** → 减少重复计算
-- **ChromaDB持久化** → 向量数据持久存储
-- **前端缓存** → 静态资源缓存
-
-## 🔒 安全配置
-
-### CORS配置
-```python
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-```
-
-### 认证机制
-- **JWT Token** → 无状态认证
-- **密码哈希** → 安全存储
-- **会话管理** → 自动过期
-
----
-
-## 📞 技术支持
-
-如有问题，请检查：
-1. 日志文件: `/home/qwkj/drass/logs/`
-2. 服务状态: `./manage-frontend.sh status`
-3. 端口占用: `lsof -i :端口号`
-
-**系统版本**: Ubuntu 22.04 + AMD GPU
-**最后更新**: 2025-09-21
+Drass 的正确主线不是“某一份历史部署现场快照”，而是“多服务系统 + 多部署路径 + 代码与脚本并存”。任何架构说明都应以当前仓库可验证的入口、配置和代码为准。

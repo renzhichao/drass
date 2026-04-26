@@ -1,172 +1,54 @@
-# Drass Deployment Configuration System
+# deployment 目录说明
 
-A flexible deployment configuration system supporting multiple deployment scenarios including AWS, Docker Compose, and local GPU deployments.
+本目录用于承载 Drass 的部署配置、预设、脚本和生产化辅助文件。它不是一个已经完全收敛的“统一部署平台”，而是当前项目多种部署路径的集合。
 
-## Quick Start
+## 当前目录作用
 
-```bash
-# Interactive configuration wizard
-python deployment/scripts/configure.py
+| 目录/文件 | 作用 |
+| --- | --- |
+| `configs/` | 部署预设、模板、用户配置 |
+| `scripts/` | 配置生成、校验、启动、修复、测试脚本 |
+| `docs/` | 特定部署路径说明 |
+| `production/` | 容器化生产风格部署资源 |
+| `schemas/` | 配置结构约束 |
 
-# Deploy with existing configuration
-python deployment/scripts/deploy.py --config deployment/configs/user/my-config.yaml
+## 当前实际部署路径
 
-# Validate configuration
-python deployment/scripts/validate.py --config deployment/configs/user/my-config.yaml
-```
+当前仓库里实际可识别的部署路径主要有三条：
 
-## Supported Deployment Scenarios
+1. 本地开发联调
+   - 参考：根目录 `start-system.sh`
+   - 特点：开发态，本地前后端 + Docker 基础设施混合
 
-### 1. Docker Compose (Local Development)
-- Complete containerized environment
-- All services in Docker containers
-- Ideal for development and testing
+2. Ubuntu / 本机服务化部署
+   - 参考：`deployment/scripts/start-ubuntu-services.sh`
+   - 特点：更接近生产，常配合已有 LLM / Embedding / Reranking 服务
 
-### 2. Local GPU (Production with Hardware Acceleration)
-- Utilizes local GPU resources (Apple Silicon MLX or NVIDIA CUDA)
-- Native performance for AI models
-- Optimized for edge deployments
+3. 容器化生产风格部署
+   - 参考：`deployment/production/docker-compose.prod.yml`
+   - 特点：以容器编排 main-app、AI 服务、Redis、Nginx、监控组件
 
-### 3. AWS (Cloud Production)
-- ECS/EC2 deployment
-- Auto-scaling support
-- Managed services integration (RDS, ElastiCache)
+## 当前应优先参考的文件
 
-## Directory Structure
+如果你要部署项目，建议阅读顺序：
 
-```
-deployment/
-├── configs/           # Configuration files
-│   ├── templates/    # Base templates for different scenarios
-│   ├── presets/      # Pre-configured scenarios
-│   ├── user/         # User-specific configurations
-│   └── examples/     # Example configurations
-├── scripts/          # Deployment scripts
-│   ├── configure.py  # Interactive configuration wizard
-│   ├── deploy.py     # Unified deployment script
-│   ├── validate.py   # Configuration validator
-│   └── utils/        # Utility modules
-├── schemas/          # YAML schemas for validation
-└── docs/            # Documentation
-```
+1. `README.md`
+2. `docs/ONE_CLICK_STARTUP_GUIDE.md`
+3. `docs/chensha_部署与基础设施规则.md`
+4. `deployment/docs/ubuntu-amd-deployment.md`
+5. `production/` 目录下的配置和脚本
 
-## Configuration Workflow
+## 这份目录说明不再承诺的内容
 
-1. **Generate Configuration**
-   ```bash
-   python deployment/scripts/configure.py
-   ```
-   - Interactive wizard guides through options
-   - Hardware auto-detection and recommendations
-   - Saves configuration to `configs/user/`
+以下内容在历史文档里表达得过满，但当前仓库并不适合继续作为默认事实：
 
-2. **Validate Configuration**
-   ```bash
-   python deployment/scripts/validate.py --config your-config.yaml
-   ```
-   - Schema validation
-   - Dependency checking
-   - Resource availability verification
+1. “所有部署模式都已被统一配置系统完整覆盖”
+2. “configure.py / deploy.py 已经是唯一权威入口”
+3. “AWS、Docker Compose、本地 GPU 三套路径在当前实现层面完全对齐”
+4. “health_check.py / monitor.py / rollback.py 等工具已形成完整闭环”
 
-3. **Deploy Application**
-   ```bash
-   python deployment/scripts/deploy.py --config your-config.yaml
-   ```
-   - Automated deployment based on configuration
-   - Health checking
-   - Rollback support
+## 当前更准确的事实
 
-## Configuration Options
-
-### Core Services
-- **API Backend** - FastAPI application
-- **Frontend** - React application
-- **LLM Service** - Language model provider
-- **Embedding Service** - Text embeddings
-- **Reranking Service** - Document reranking
-- **Vector Store** - Vector database
-- **Database** - PostgreSQL
-- **Cache** - Redis
-
-### LLM Providers
-- OpenRouter (Cloud)
-- OpenAI API
-- Local MLX (Apple Silicon)
-- vLLM (NVIDIA GPU)
-- Ollama (Multiple models)
-
-### Storage Options
-- **Vector Stores**: ChromaDB, Weaviate, Pinecone, Qdrant
-- **Databases**: PostgreSQL, MySQL
-- **Cache**: Redis, Memcached
-
-## Environment Variables
-
-The system automatically generates appropriate `.env` files based on your configuration:
-
-```bash
-# Generated .env example
-LLM_PROVIDER=openrouter
-LLM_MODEL=gpt-4
-LLM_API_KEY=your-api-key
-EMBEDDING_PROVIDER=local
-VECTOR_STORE_TYPE=chromadb
-DATABASE_URL=postgresql://user:pass@localhost/drass
-REDIS_URL=redis://localhost:6379
-```
-
-## Examples
-
-### Minimal Local Development
-```bash
-python deployment/scripts/configure.py --preset minimal
-python deployment/scripts/deploy.py --config configs/user/minimal.yaml
-```
-
-### Production with Local GPU
-```bash
-python deployment/scripts/configure.py --preset local-gpu
-python deployment/scripts/deploy.py --config configs/user/local-gpu.yaml
-```
-
-### AWS Deployment
-```bash
-python deployment/scripts/configure.py --preset aws
-python deployment/scripts/deploy.py --config configs/user/aws.yaml --environment production
-```
-
-## Health Checking
-
-All deployments include automatic health checking:
-
-```bash
-# Check service health
-python deployment/scripts/health_check.py --config your-config.yaml
-
-# Monitor deployment
-python deployment/scripts/monitor.py --config your-config.yaml
-```
-
-## Rollback
-
-If deployment fails, automatic rollback is triggered:
-
-```bash
-# Manual rollback
-python deployment/scripts/rollback.py --config your-config.yaml --version previous
-```
-
-## Troubleshooting
-
-See `deployment/docs/troubleshooting.md` for common issues and solutions.
-
-## Contributing
-
-1. Add new deployment scenarios in `configs/templates/`
-2. Implement deployers in `scripts/deployers/`
-3. Update schema in `schemas/config-schema.yaml`
-4. Add tests in `tests/`
-
-## License
-
-See LICENSE file in the root directory.
+1. `deployment/` 更像“部署资源集合”，不是完全收敛的发布平台。
+2. 部署脚本有一定参考价值，但不能替代对 `production/`、启动脚本和服务配置的核对。
+3. 当前最重要的工作不是继续扩展部署模式，而是统一端口、变量名、服务契约和文档入口。
