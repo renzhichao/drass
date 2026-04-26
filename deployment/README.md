@@ -1,5 +1,8 @@
 # Drass Deployment Configuration System
 
+Canonical rules:
+- See `deployment/DEVOPS_INFRA_RULES.md` for the current human-readable DevOps / infra source of truth.
+
 A flexible deployment configuration system supporting multiple deployment scenarios including AWS, Docker Compose, and local GPU deployments.
 
 ## Quick Start
