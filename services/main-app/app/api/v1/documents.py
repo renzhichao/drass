@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Form
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -96,6 +96,7 @@ async def get_documents(
 
 @router.post("/upload", response_model=Document)
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     folder_id: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
@@ -106,44 +107,54 @@ async def upload_document(
     Upload a document
     """
     try:
-        # Validate file type
-        file_extension = file.filename.split(".")[-1].lower()
+        # Fast-fail: reject oversized uploads before reading the body
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > settings.max_file_size_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File size exceeds maximum allowed size of {settings.MAX_FILE_SIZE_MB}MB",
+            )
+
+        # Validate extension before reading any bytes
+        file_extension = (file.filename or "").split(".")[-1].lower()
         if file_extension not in settings.ALLOWED_FILE_TYPES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"File type '{file_extension}' is not allowed"
+                detail=f"File type '{file_extension}' is not allowed",
             )
-        
-        # Validate file size
-        content = await file.read()
-        file_size = len(content)
-        
-        if file_size > settings.max_file_size_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"File size exceeds maximum allowed size of {settings.MAX_FILE_SIZE_MB}MB"
+
+        # Stream into a tempfile to avoid loading the whole upload into memory
+        import tempfile, os, shutil
+        with tempfile.SpooledTemporaryFile(max_size=1 * 1024 * 1024) as tmp:
+            bytes_written = 0
+            chunk_size = 64 * 1024  # 64 KB
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > settings.max_file_size_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"File size exceeds maximum allowed size of {settings.MAX_FILE_SIZE_MB}MB",
+                    )
+                tmp.write(chunk)
+            tmp.seek(0)
+
+            tag_list = [t.strip() for t in tags.split(",")] if tags else []
+
+            from app.services.document_service import document_service
+
+            document = await document_service.upload_document(
+                user_id=current_user["id"],
+                file=tmp,
+                filename=file.filename,
+                content_type=file.content_type,
+                folder_id=folder_id,
+                tags=tag_list,
+                description=None,
+                auto_process=auto_process,
             )
-        
-        # Reset file pointer
-        await file.seek(0)
-        
-        # Parse tags
-        tag_list = []
-        if tags:
-            tag_list = [tag.strip() for tag in tags.split(",")]
-        
-        from app.services.document_service import document_service
-        
-        document = await document_service.upload_document(
-            user_id=current_user["id"],
-            file=file.file,
-            filename=file.filename,
-            content_type=file.content_type,
-            folder_id=folder_id,
-            tags=tag_list,
-            description=None,
-            auto_process=auto_process
-        )
 
         return Document(
             id=str(document.id),
@@ -154,16 +165,16 @@ async def upload_document(
             metadata=document.metadata,
             created_at=document.created_at,
             updated_at=document.updated_at,
-            tags=document.tags
+            tags=document.tags,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Upload document error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload document: {str(e)}"
+            detail=f"Failed to upload document: {str(e)}",
         )
 
 

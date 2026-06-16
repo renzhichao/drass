@@ -17,6 +17,11 @@ services:
       - main-app
     networks:
       - langchain-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   # Main Backend - FastAPI with LangChain
   main-app:
@@ -70,6 +75,11 @@ services:
       - doc-processor
     networks:
       - langchain-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
 
   # Embedding Service
   embedding-service:
@@ -91,6 +101,11 @@ services:
       - redis
     networks:
       - langchain-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   # Reranking Service (Optimized)
   reranking-service:
@@ -183,6 +198,11 @@ services:
       - ./data/processed:/app/processed
     networks:
       - langchain-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   # LLM Gateway (Optional - for multi-provider support)
   llm-gateway:
@@ -203,6 +223,11 @@ services:
       - redis
     networks:
       - langchain-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   # PostgreSQL Database
   postgres:
@@ -212,7 +237,7 @@ services:
       - "5432:5432"
     environment:
       - POSTGRES_USER=langchain
-      - POSTGRES_PASSWORD=langchain123
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-langchain123}
       - POSTGRES_DB=langchain_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -224,6 +249,11 @@ services:
       retries: 5
     networks:
       - langchain-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   # Redis Cache
   redis:
@@ -239,6 +269,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     networks:
       - langchain-network
 

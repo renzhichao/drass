@@ -223,12 +223,44 @@ class ComplianceRAGChain:
             
             class CustomEmbeddings(Embeddings):
                 def embed_documents(self, texts: List[str]) -> List[List[float]]:
-                    response = requests.post(
-                        f"{settings.EMBEDDING_API_BASE}/embeddings",
-                        json={"texts": texts}
-                    )
-                    return response.json()["embeddings"]
-                
+                    import httpx
+                    import asyncio
+                    import pybreaker
+                    from app.core.circuit_breaker import embedding_breaker
+
+                    async def _post() -> List[List[float]]:
+                        async with httpx.AsyncClient(timeout=30.0) as client:
+                            for attempt in range(3):
+                                try:
+                                    resp = await client.post(
+                                        f"{settings.EMBEDDING_API_BASE}/embeddings",
+                                        json={"texts": texts},
+                                    )
+                                    resp.raise_for_status()
+                                    return resp.json()["embeddings"]
+                                except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+                                    if attempt == 2:
+                                        raise
+                                    await asyncio.sleep(2 ** attempt)
+                            raise RuntimeError("unreachable")
+
+                    try:
+                        @embedding_breaker
+                        def _guarded():
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                import concurrent.futures
+                                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                                    future = pool.submit(asyncio.run, _post())
+                                    return future.result(timeout=35)
+                            return loop.run_until_complete(_post())
+
+                        return _guarded()
+                    except pybreaker.CircuitBreakerError:
+                        raise RuntimeError("Embedding service circuit breaker open — too many recent failures")
+                    except Exception as exc:
+                        raise RuntimeError(f"Embedding service error: {exc}") from exc
+
                 def embed_query(self, text: str) -> List[float]:
                     return self.embed_documents([text])[0]
             
@@ -692,85 +724,52 @@ class ComplianceRAGChain:
         min_words: int = None
     ) -> str:
         """
-        Ensure the answer meets minimum word count requirement
-
-        Args:
-            answer: Current answer text
-            sources: Source documents for context
-            min_words: Minimum word count (default from config)
-
-        Returns:
-            Expanded answer if needed
+        Ensure the answer meets minimum word count requirement.
+        Uses a single-shot prompt that asks the LLM to write the full expanded
+        response directly, avoiding exponential context growth from iterative appending.
         """
         if min_words is None:
             min_words = DEFAULT_COMPLIANCE_CONFIG.min_word_count
 
         current_count = self._count_chinese_words(answer)
 
-        # If already meets requirement, return as is
         if current_count >= min_words:
             logger.info(f"Answer already has {current_count} words, meeting requirement of {min_words}")
             return answer
 
-        logger.info(f"Answer has {current_count} words, expanding to meet {min_words} requirement")
+        gap = min_words - current_count
+        logger.info(f"Answer has {current_count} words, requesting single-shot expansion to {min_words}")
 
-        # Prepare expansion prompt
-        expansion_attempts = 0
-        max_attempts = 3
-        expanded_answer = answer
+        # Cap per-request token budget so context can never spiral out of control.
+        # 1 Chinese char ≈ 1 token; add 20 % headroom.
+        max_tokens = min(int(gap * 1.2) + 512, 6000)
 
-        while current_count < min_words and expansion_attempts < max_attempts:
-            expansion_attempts += 1
+        single_shot_prompt = (
+            f"请将以下合规分析回答扩展至不少于 {min_words} 字。\n"
+            f"要求：\n"
+            f"1. 保留原有所有要点，在此基础上补充细节、案例、法规依据和实施步骤\n"
+            f"2. 直接输出完整的扩展后回答，不要重复说明你在做什么\n"
+            f"3. 目标字数：{min_words} 字（当前约 {current_count} 字，需补充约 {gap} 字）\n\n"
+            f"原始回答：\n{answer}"
+        )
 
-            # Create expansion prompt with context
-            expansion_context = f"""
-当前回答字数：{current_count}
-要求字数：{min_words}
-还需补充：{min_words - current_count}字
+        try:
+            response = await self.llm.ainvoke(
+                single_shot_prompt,
+                config={"max_tokens": max_tokens},
+            )
+            expanded = response.content if hasattr(response, "content") else str(response)
+        except Exception as e:
+            logger.error(f"Expansion LLM call failed: {e}")
+            expanded = answer
 
-请基于以下已有回答进行深度扩展，确保：
-1. 保持原有内容不变，在此基础上补充更多细节
-2. 添加更多实例、案例分析、具体步骤说明
-3. 深化每个要点的分析，提供更详细的实施指导
-4. 补充相关的法规依据、最佳实践、风险提示
-5. 确保扩展内容与原回答保持连贯性和一致性
-
-已有回答：
-{expanded_answer}
-
-请继续扩展以上内容，使总字数达到{min_words}字以上。
-"""
-
-            try:
-                # Use LLM to expand the answer
-                expansion_response = await self.llm.ainvoke(
-                    expansion_context,
-                    config={"max_tokens": 4000}
-                )
-
-                # Extract the expanded content
-                if hasattr(expansion_response, 'content'):
-                    expanded_content = expansion_response.content
-                else:
-                    expanded_content = str(expansion_response)
-
-                # Combine original and expanded content
-                expanded_answer = f"{expanded_answer}\n\n{expanded_content}"
-                current_count = self._count_chinese_words(expanded_answer)
-
-                logger.info(f"Expansion attempt {expansion_attempts}: now has {current_count} words")
-
-            except Exception as e:
-                logger.error(f"Error during expansion attempt {expansion_attempts}: {e}")
-                break
-
-        # Add word count indicator
-        if current_count >= min_words:
-            expanded_answer = f"{expanded_answer}\n\n---\n📊 **字数统计**: {current_count}字 (满足{min_words}字要求)"
-        else:
-            expanded_answer = f"{expanded_answer}\n\n---\n⚠️ **字数统计**: {current_count}字 (目标{min_words}字)"
-
-        return expanded_answer
+        final_count = self._count_chinese_words(expanded)
+        suffix = (
+            f"\n\n---\n📊 **字数统计**: {final_count}字 (满足{min_words}字要求)"
+            if final_count >= min_words
+            else f"\n\n---\n⚠️ **字数统计**: {final_count}字 (目标{min_words}字)"
+        )
+        return expanded + suffix
 
     def _ensure_minimum_word_count_sync(
         self,

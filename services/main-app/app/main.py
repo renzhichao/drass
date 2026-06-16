@@ -167,35 +167,32 @@ async def health_check() -> Dict[str, Any]:
     """
     Health check endpoint for monitoring
     """
+    import asyncio
+
     health_status = {
         "status": "healthy",
         "services": {}
     }
-    
-    try:
-        # Check vector store
-        from app.services.vector_store import vector_store_service
-        health_status["services"]["vector_store"] = await vector_store_service.health_check()
-    except Exception as e:
-        health_status["services"]["vector_store"] = {"status": "unhealthy", "error": str(e)}
-        health_status["status"] = "degraded"
-    
-    try:
-        # Check LLM service (using unified service)
-        from app.services.llm_service_enhanced import unified_llm_service
-        health_status["services"]["llm"] = await unified_llm_service.health_check()
-    except Exception as e:
-        health_status["services"]["llm"] = {"status": "unhealthy", "error": str(e)}
-        health_status["status"] = "degraded"
-    
-    try:
-        # Check embedding service
-        from app.services.embedding_service import embedding_service
-        health_status["services"]["embedding"] = await embedding_service.health_check()
-    except Exception as e:
-        health_status["services"]["embedding"] = {"status": "unhealthy", "error": str(e)}
-        health_status["status"] = "degraded"
-    
+
+    async def _check(name: str, coro):
+        try:
+            result = await asyncio.wait_for(coro, timeout=2.0)
+            health_status["services"][name] = result
+        except asyncio.TimeoutError:
+            health_status["services"][name] = {"status": "unhealthy", "error": "timeout"}
+            health_status["status"] = "degraded"
+        except Exception as e:
+            health_status["services"][name] = {"status": "unhealthy", "error": str(e)}
+            health_status["status"] = "degraded"
+
+    from app.services.vector_store import vector_store_service
+    from app.services.llm_service_enhanced import unified_llm_service
+    from app.services.embedding_service import embedding_service
+
+    await _check("vector_store", vector_store_service.health_check())
+    await _check("llm", unified_llm_service.health_check())
+    await _check("embedding", embedding_service.health_check())
+
     return health_status
 
 # Metrics endpoint

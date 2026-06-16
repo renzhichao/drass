@@ -2,7 +2,26 @@ from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 from typing import List, Optional, Dict, Any
 import os
+import sys
 from pathlib import Path
+
+_WEAK_SECRET_KEY = "your-secret-key-change-in-production"
+_WEAK_DB_PASSWORDS = {"password", "langchain123", "postgres"}
+
+
+def _assert_production_secrets(env: str, secret_key: str, database_url: str) -> None:
+    if env != "production":
+        return
+    errors: list[str] = []
+    if secret_key == _WEAK_SECRET_KEY:
+        errors.append("SECRET_KEY is still the default placeholder — set a strong random value")
+    for weak in _WEAK_DB_PASSWORDS:
+        if f":{weak}@" in database_url:
+            errors.append(f"DATABASE_URL contains weak password '{weak}'")
+    if errors:
+        for e in errors:
+            print(f"[FATAL] {e}", file=sys.stderr)
+        sys.exit(1)
 
 class Settings(BaseSettings):
     """
@@ -251,6 +270,8 @@ class Settings(BaseSettings):
 
 # Create settings instance
 settings = Settings()
+
+_assert_production_secrets(settings.ENVIRONMENT, settings.SECRET_KEY, settings.DATABASE_URL)
 
 # Create necessary directories
 Path(settings.STORAGE_PATH).mkdir(parents=True, exist_ok=True)

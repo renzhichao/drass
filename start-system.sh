@@ -60,8 +60,21 @@ print_section() {
     echo -e "${MAGENTA}========================================${NC}"
 }
 
-# Function to check if port is in use
-check_port() {
+# wait_for_tcp HOST PORT NAME MAX_SECONDS — replaces bare sleep
+wait_for_tcp() {
+    local host=$1 port=$2 name=$3 max=${4:-60}
+    local elapsed=0
+    print_status "Waiting for $name ($host:$port)..."
+    until nc -z "$host" "$port" 2>/dev/null; do
+        if [ $elapsed -ge $max ]; then
+            print_error "$name did not become ready within ${max}s"
+            return 1
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    print_success "$name is ready (${elapsed}s)"
+}
     local port=$1
     if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
         return 0  # Port is in use
@@ -248,14 +261,13 @@ start_infrastructure() {
     # Start PostgreSQL
     print_status "Starting PostgreSQL..."
     docker-compose -f "$DOCKER_COMPOSE_FILE" up -d postgres
-    # PostgreSQL doesn't have an HTTP endpoint, just wait a few seconds for it to start
-    sleep 5
+    wait_for_tcp localhost 5432 "PostgreSQL" 60
     print_success "PostgreSQL started"
-    
+
     # Start Redis
     print_status "Starting Redis..."
     docker-compose -f "$DOCKER_COMPOSE_FILE" up -d redis
-    sleep 3
+    wait_for_tcp localhost 6379 "Redis" 30
     
     # Start ChromaDB
     print_status "Starting ChromaDB Vector Store..."
